@@ -18,9 +18,17 @@ class MyTestCase(TestCase):
         refresh = foo["refresh"]
         access = foo["access"]
 
-        # Try to refresh tokens
+        # Works fine
+        response = c.get('/hello/', HTTP_AUTHORIZATION="Bearer "+access)
+        print(response.content)
+        self.assertEqual(response.status_code, 200)
+
+        # Refresh tokens
         response = c.post('/api/token/refresh/', data={"refresh": refresh})
         self.assertEqual(response.status_code, 200)
+        foo = json.loads(response.content.decode('utf-8'))
+        refresh = foo["refresh"]
+        access = foo["access"]
 
         # Works fine
         response = c.get('/hello/', HTTP_AUTHORIZATION="Bearer "+access)
@@ -39,12 +47,55 @@ class MyTestCase(TestCase):
         print(response.content)
         self.assertEqual(response.status_code, 200)
 
-        # Create inactive inactive
+        # Impossible to get tokens for deleted user
+        response = c.post('/api/token/', {'username': 'joe', 'password': 'doe'})
+        self.assertEqual(response.status_code, 401)
+
+        # Impossible to refresh tokens for deleted user
+        response = c.post('/api/token/refresh/', data={"refresh": refresh})
+        self.assertEqual(response.status_code, 401)
+
+        # Create an inactive user
         user = User.objects.create_user('joe', 'joe@doe.com', 'doe', is_active=False)
 
         # Impossible to get tokens for inactive user
         response = c.post('/api/token/', {'username': 'joe', 'password': 'doe'})
         self.assertEqual(response.status_code, 401)
 
-        # TODO Disallow token refreshing for inactive users
+        # Impossible to refresh tokens for inactive user
+        response = c.post('/api/token/refresh/', data={"refresh": refresh})
+        self.assertEqual(response.status_code, 401)
 
+        # Make the user active
+        user.is_active = True
+        user.save()
+
+        # Get tokens
+        response = c.post('/api/token/', {'username': 'joe', 'password': 'doe'})
+        self.assertEqual(response.status_code, 200)
+        foo = json.loads(response.content.decode('utf-8'))
+        refresh = foo["refresh"]
+        access = foo["access"]
+
+        # Works fine
+        response = c.get('/hello/', HTTP_AUTHORIZATION="Bearer "+access)
+        print(response.content)
+        self.assertEqual(response.status_code, 200)
+
+        # Change first_name
+        user.first_name = "Johny"
+        user.save()
+
+        # Refresh tokens
+        response = c.post('/api/token/refresh/', data={"refresh": refresh})
+        self.assertEqual(response.status_code, 200)
+        foo = json.loads(response.content.decode('utf-8'))
+        refresh = foo["refresh"]
+        access = foo["access"]
+
+        # Works fine. New first_name is got from token after refresh
+        response = c.get('/hello/', HTTP_AUTHORIZATION="Bearer "+access)
+        print(response.content)
+        self.assertEqual(response.status_code, 200)
+        foo = json.loads(response.content.decode('utf-8'))
+        self.assertEqual(foo["user"]["first_name"],"Johny")
