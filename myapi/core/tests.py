@@ -1,6 +1,8 @@
 from django.test import TestCase
 from django.test import Client
-from django.contrib.auth.models import User
+from time import sleep
+
+from myapi.core.models import User
 from rest_framework.utils import json
 
 
@@ -42,7 +44,7 @@ class MyTestCase(TestCase):
         # Drop user
         user.delete()
 
-        # BUT STILL works fine
+        # BUT STILL works fine. So access token can be used without database
         response = c.get('/hello/', HTTP_AUTHORIZATION="Bearer "+access)
         print(response.content)
         self.assertEqual(response.status_code, 200)
@@ -98,4 +100,35 @@ class MyTestCase(TestCase):
         print(response.content)
         self.assertEqual(response.status_code, 200)
         foo = json.loads(response.content.decode('utf-8'))
-        self.assertEqual(foo["user"]["first_name"],"Johny")
+        self.assertEqual(foo["user"]["first_name"], "Johny")
+
+        # Sleep a little to old token become 1 sec older
+        sleep(1)
+
+        # LogOutAll
+        response = c.post('/api/token/logOutAll/', HTTP_AUTHORIZATION="Bearer "+access)
+        self.assertEqual(response.status_code, 200)
+        foo = json.loads(response.content.decode('utf-8'))
+        new_refresh = foo["refresh"]
+
+        user = User.objects.get(**{"id": user.id})
+        print("token_stale:", user.token_stale)
+
+        # Impossible to refresh tokens with an old refresh token after LogOutAll
+        response = c.post('/api/token/refresh/', data={"refresh": refresh})
+        self.assertEqual(response.status_code, 401)
+
+        # But is possible with a new refresh token
+        response = c.post('/api/token/refresh/', data={"refresh": new_refresh})
+        self.assertEqual(response.status_code, 200)
+        refresh = foo["refresh"]
+        access = foo["access"]
+
+        # Works fine
+        response = c.get('/hello/', HTTP_AUTHORIZATION="Bearer "+access)
+        print(response.content)
+        self.assertEqual(response.status_code, 200)
+
+        # And refreshes fine
+        response = c.post('/api/token/refresh/', data={"refresh": refresh})
+        self.assertEqual(response.status_code, 200)

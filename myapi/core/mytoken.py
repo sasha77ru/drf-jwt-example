@@ -1,5 +1,4 @@
 from importlib._common import _
-
 from django.contrib.auth.models import update_last_login
 from rest_framework import serializers
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -7,7 +6,7 @@ from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 
 class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -31,19 +30,27 @@ class MyTokenObtainPairView(TokenObtainPairView):
 # Works exactly as MyTokenObtainPairSerializer but get auth from an old refresh token
 class MyTokenRefreshSerializer(MyTokenObtainPairSerializer):
     def __init__(self, *args, **kwargs):
-        # Skip ancestor __init__
-        serializers.Serializer.__init__(self,*args, **kwargs)
+        # Skip ancestor's __init__
+        serializers.Serializer.__init__(self, *args, **kwargs)
 
     def validate(self, attrs):
-        foo = self.my_get_validated_token(self.initial_data["refresh"])
+        old_token = self.my_get_validated_token(self.initial_data["refresh"])
         # Get user from an old refresh token
-        self.user = JWTAuthentication().get_user(foo)
-        refresh = self.get_token(self.user)
+        self.user = JWTAuthentication().get_user(old_token)
+
+        # Prevent token refreshing with old refresh tokens after LogOutAll
+        if self.user.token_stale and old_token.payload["exp"] < int(self.user.token_stale.timestamp()):
+            raise InvalidToken({
+                'detail': _('Token is expired due to LogOutAll')
+            })
+
+        new_token = self.get_token(self.user)
 
         data = {}
 
-        if api_settings.ROTATE_REFRESH_TOKENS: data['refresh'] = str(refresh)
-        data['access'] = str(refresh.access_token)
+        if api_settings.ROTATE_REFRESH_TOKENS:
+            data['refresh'] = str(new_token)
+        data['access'] = str(new_token.access_token)
 
         if api_settings.UPDATE_LAST_LOGIN:
             update_last_login(None, self.user)
@@ -57,7 +64,7 @@ class MyTokenRefreshSerializer(MyTokenObtainPairSerializer):
         """
         try:
             return RefreshToken(raw_token)
-        except TokenError as e:
+        except TokenError:
             raise InvalidToken({
             'detail': _('Given token not valid for Refresh token type')
             })
